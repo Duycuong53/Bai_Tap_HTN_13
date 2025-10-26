@@ -11,12 +11,12 @@ Các bài học giúp sinh viên hiểu rõ cơ chế **task scheduling, synchro
 ### 🎯 Yêu cầu
 - Viết chương trình có **2 task**:
   1. **Task Blink LED** – nhấp nháy LED định kỳ.  
-  2. **Task xử lý ngắt (ISR Handler Task)** – bật đèn hoặc còi cảnh báo khi có ngắt ngoài.  
+  2. **Task xử lý ngắt (IRQ Handler Task)** – bật đèn hoặc còi cảnh báo khi có ngắt ngoài.  
 - Khi **nhấn nút**, task xử lý được kích hoạt ngay sau khi hàm ngắt (ISR) thực thi.  
 - Khi **chưa nhấn nút**, task xử lý ở trạng thái **Block** (treo chờ sự kiện).
 
 ### 🧩 Mục tiêu học tập
-- Hiểu cơ chế **ISR + Task Notification/Event** trong FreeRTOS.  
+- Hiểu cơ chế **IRQ + Task Notification/Event** trong FreeRTOS.  
 - Sử dụng **ngắt ngoài (EXTI)** để kích hoạt một task cụ thể.  
 - Quản lý trạng thái Block/Ready của task hiệu quả.  
 
