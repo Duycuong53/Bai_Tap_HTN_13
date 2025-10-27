@@ -1,67 +1,115 @@
-/********** IRQ demo: PA0 -> EXTI0, toggle LED PC13 **********/
 #include "stm32f10x.h"
 #include "stm32f10x_rcc.h"
 #include "stm32f10x_gpio.h"
 #include "stm32f10x_exti.h"
 #include "misc.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
 
-#define LED_PORT   GPIOC
-#define LED_PIN    GPIO_Pin_13
-#define BTN_PORT   GPIOA
-#define BTN_PIN    GPIO_Pin_0
+//================================================
+// Ã?nh nghia chÃ¢n
+//================================================
+#define LED_BLINK_PORT   GPIOA
+#define LED_BLINK_PIN    GPIO_Pin_5
+#define LED_EVENT_PORT   GPIOA
+#define LED_EVENT_PIN    GPIO_Pin_6
+#define BTN_PORT         GPIOA
+#define BTN_PIN          GPIO_Pin_0
 
+//================================================
+// Khai bÃ¡o semaphore
+//================================================
+SemaphoreHandle_t xButtonSemaphore;
+
+//================================================
+// C?u hÃ¬nh GPIO
+//================================================
 static void GPIO_Config(void) {
     GPIO_InitTypeDef g;
 
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA |
-                           RCC_APB2Periph_GPIOC |
-                           RCC_APB2Periph_AFIO, ENABLE);
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA | RCC_APB2Periph_AFIO, ENABLE);
 
-    // PC13: LED on-board (active-low)
-    g.GPIO_Pin   = LED_PIN;
+    // LED PA5: nhÃ¡y liÃªn t?c
+    g.GPIO_Pin   = LED_BLINK_PIN;
     g.GPIO_Mode  = GPIO_Mode_Out_PP;
     g.GPIO_Speed = GPIO_Speed_2MHz;
-    GPIO_Init(LED_PORT, &g);
-    GPIO_SetBits(LED_PORT, LED_PIN);           // t?t (active-low)
+    GPIO_Init(LED_BLINK_PORT, &g);
+    GPIO_ResetBits(LED_BLINK_PORT, LED_BLINK_PIN);
 
-    // PA0: nút nh?n (kéo lên n?i), nh?n -> 0V
+    // LED PA6: sÃ¡ng khi nh?n nÃºt
+    g.GPIO_Pin   = LED_EVENT_PIN;
+    g.GPIO_Mode  = GPIO_Mode_Out_PP;
+    g.GPIO_Speed = GPIO_Speed_2MHz;
+    GPIO_Init(LED_EVENT_PORT, &g);
+    GPIO_ResetBits(LED_EVENT_PORT, LED_EVENT_PIN);
+
+    // NÃºt PA0 (pull-up n?i)
     g.GPIO_Pin   = BTN_PIN;
     g.GPIO_Mode  = GPIO_Mode_IPU;
     GPIO_Init(BTN_PORT, &g);
 }
 
+//================================================
+// C?u hÃ¬nh ng?t ngoÃ i EXTI0 (PA0)
+//================================================
 static void EXTI0_Config(void) {
     EXTI_InitTypeDef e;
     NVIC_InitTypeDef n;
 
-    // Ánh x? PA0 -> EXTI Line0
     GPIO_EXTILineConfig(GPIO_PortSourceGPIOA, GPIO_PinSource0);
 
-    // C?u h?nh EXTI0: ng?t c?nh xu?ng (nh?n -> 0)
     e.EXTI_Line    = EXTI_Line0;
     e.EXTI_Mode    = EXTI_Mode_Interrupt;
-    e.EXTI_Trigger = EXTI_Trigger_Falling;
+    e.EXTI_Trigger = EXTI_Trigger_Falling;  // nh?n nÃºt ? c?nh xu?ng
     e.EXTI_LineCmd = ENABLE;
     EXTI_Init(&e);
 
-    // B?t kênh NVIC c?a IRQ EXTI0
-    n.NVIC_IRQChannel = EXTI0_IRQn;                 // <-- Ðây là "IRQ"
-    n.NVIC_IRQChannelPreemptionPriority = 2;        // ýu tiên ng?t
+    n.NVIC_IRQChannel = EXTI0_IRQn;
+    n.NVIC_IRQChannelPreemptionPriority = 5; // Uu tiÃªn th?p hon FreeRTOS
     n.NVIC_IRQChannelSubPriority        = 0;
     n.NVIC_IRQChannelCmd = ENABLE;
     NVIC_Init(&n);
 }
 
-// ISR = Interrupt Service Routine cho IRQ EXTI0
+//================================================
+// TrÃ¬nh ph?c v? ng?t ngoÃ i EXTI0 (PA0)
+//================================================
 void EXTI0_IRQHandler(void) {
-    if (EXTI_GetITStatus(EXTI_Line0) == SET) {
-        EXTI_ClearITPendingBit(EXTI_Line0);         // xóa c? trý?c
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-        // Toggle LED PC13 (active-low)
-        if (GPIO_ReadOutputDataBit(LED_PORT, LED_PIN))
-            GPIO_ResetBits(LED_PORT, LED_PIN);      // b?t
-        else
-            GPIO_SetBits(LED_PORT, LED_PIN);        // t?t
+    if (EXTI_GetITStatus(EXTI_Line0) == SET) {
+        EXTI_ClearITPendingBit(EXTI_Line0);
+
+        // G?i semaphore cho task x? lÃ½
+        xSemaphoreGiveFromISR(xButtonSemaphore, &xHigherPriorityTaskWoken);
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    }
+}
+
+//================================================
+// Task 1: Blink LED PA5
+//================================================
+void vTaskBlinkLED(void *pvParameters) {
+    while (1) {
+        GPIO_SetBits(LED_BLINK_PORT, LED_BLINK_PIN);
+        vTaskDelay(pdMS_TO_TICKS(500));
+GPIO_ResetBits(LED_BLINK_PORT, LED_BLINK_PIN);
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
+//================================================
+// Task 2: B?t LED PA6 khi cÃ³ ng?t nÃºt nh?n
+//================================================
+void vTaskButtonEvent(void *pvParameters) {
+    while (1) {
+        // Ch? semaphore t? ng?t
+        if (xSemaphoreTake(xButtonSemaphore, portMAX_DELAY) == pdTRUE) {
+            GPIO_SetBits(LED_EVENT_PORT, LED_EVENT_PIN);   // B?t LED
+            vTaskDelay(pdMS_TO_TICKS(3000));               // Gi? 3 giÃ¢y
+            GPIO_ResetBits(LED_EVENT_PORT, LED_EVENT_PIN); // T?t LED
+        }
     }
 }
 
@@ -70,8 +118,12 @@ int main(void) {
     GPIO_Config();
     EXTI0_Config();
 
-    while (1) {
-        __WFI();  // ch? ng?t ð? ti?t ki?m nãng lý?ng (không b?t bu?c)
-    }
-}
+    xButtonSemaphore = xSemaphoreCreateBinary();
 
+    xTaskCreate(vTaskBlinkLED, "Blink", 128, NULL, 1, NULL);
+    xTaskCreate(vTaskButtonEvent, "Button", 128, NULL, 2, NULL);
+
+    vTaskStartScheduler();
+
+    while (1);
+}
